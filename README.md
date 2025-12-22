@@ -1,18 +1,44 @@
-# Carsten's System Scripts
+# Scripts
 
-Automatisierungs- und Wartungsscripts für Arch Linux.
+Sammlung nützlicher Shell-Scripts für den täglichen Gebrauch.
 
 ## Installation
+
 ```bash
-cd ~/repos/scripts
-stow -t ~ .
+# Repository klonen
+git clone <repository-url> ~/scripts
+cd ~/scripts
+
+# Scripts verfügbar machen
+stow .
 ```
 
 ## Scripts
 
-| Script | Beschreibung |
-|--------|--------------|
-| `rofi-wifi` | WLAN-Manager mit rofi |
-| `system-check` | System-Diagnose und Wartung mit Aider |
-| `update-readme` | Automatische README-Generierung für verschiedene Repository-Typen |
+### rofi-wifi
+
+Rofi WiFi Manager - Tokyo Night Storm Theme
+
+**Usage:**
+```bash
+
+```
+
+### system-check
+
+Tokyo Night Storm Colors
+
+**Usage:**
+```bash
+${NC}"
+```
+
+### update-readme.sh
+
+update-readme.sh - Automatische README.md Generierung für verschiedene Repository-Typen
+
+**Usage:**
+```bash
+**" >> "$readme_file"
+```
 
