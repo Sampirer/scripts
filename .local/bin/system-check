@@ -43,8 +43,8 @@ diagnose() {
         echo
         
         echo "=== DOTFILES SYMLINKS ==="
-        if [ -d "$HOME/.dotfiles" ]; then
-            find "$HOME/.dotfiles" -name "*.symlink" 2>/dev/null | while read -r file; do
+        if [ -d "$HOME/repos/dotfiles" ]; then
+            find "$HOME/repos/dotfiles" -name "*.symlink" 2>/dev/null | while read -r file; do
                 target="$HOME/.$(basename "$file" .symlink)"
                 if [ -L "$target" ]; then
                     if [ -e "$target" ]; then
@@ -57,7 +57,7 @@ diagnose() {
                 fi
             done
         else
-            echo "✗ ~/.dotfiles directory not found"
+            echo "✗ ~/repos/dotfiles directory not found"
         fi
         echo
         
@@ -142,8 +142,8 @@ fix() {
     
     print_info "Starte Aider mit Diagnose-Datei..."
     
-    if [ -d "$HOME/.dotfiles" ]; then
-        cd "$HOME/.dotfiles"
+    if [ -d "$HOME/repos/dotfiles" ]; then
+        cd "$HOME/repos/dotfiles"
         if command -v aider >/dev/null 2>&1; then
             aider --message "Analysiere diese Diagnose und fixe gefundene Probleme" "$diagnose_file"
         else
