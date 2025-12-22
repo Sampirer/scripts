@@ -14,4 +14,5 @@ stow -t ~ .
 |--------|--------------|
 | `rofi-wifi` | WLAN-Manager mit rofi |
 | `system-check` | System-Diagnose und Wartung mit Aider |
+| `update-readme` | Automatische README-Generierung für verschiedene Repository-Typen |
 
