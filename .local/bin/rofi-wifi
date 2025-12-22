@@ -1,0 +1,189 @@
+#!/bin/bash
+
+# Rofi WiFi Manager - Tokyo Night Storm Theme
+# Carsten's Arch Linux Setup
+
+# Tokyo Night Storm Farben für Rofi
+ROFI_THEME="
+* {
+    bg: #24283b;
+    fg: #c0caf5;
+    bg-alt: #1f2335;
+    selected: #7dcfff;
+    active: #9ece6a;
+    urgent: #f7768e;
+}
+
+window {
+    background-color: @bg;
+    border: 2px;
+    border-color: @selected;
+    border-radius: 10px;
+    padding: 10px;
+}
+
+mainbox {
+    background-color: transparent;
+}
+
+inputbar {
+    background-color: @bg-alt;
+    text-color: @fg;
+    border: 1px;
+    border-color: @selected;
+    border-radius: 5px;
+    padding: 8px;
+    margin: 0px 0px 10px 0px;
+}
+
+listview {
+    background-color: transparent;
+    margin: 0px;
+    padding: 0px;
+    spacing: 2px;
+}
+
+element {
+    background-color: transparent;
+    text-color: @fg;
+    padding: 8px;
+    border-radius: 5px;
+}
+
+element selected {
+    background-color: @selected;
+    text-color: @bg;
+}
+
+element-text {
+    background-color: inherit;
+    text-color: inherit;
+}
+"
+
+# Funktion: Verfügbare WLANs scannen
+scan_wifi() {
+    nmcli -t -f SSID,SIGNAL,SECURITY dev wifi | grep -v '^$' | sort -t: -k2 -nr | while IFS=: read -r ssid signal security; do
+        if [[ -n "$ssid" ]]; then
+            # Signal-Stärke Icon
+            if [[ $signal -gt 75 ]]; then
+                icon="📶"
+            elif [[ $signal -gt 50 ]]; then
+                icon="📶"
+            elif [[ $signal -gt 25 ]]; then
+                icon="📶"
+            else
+                icon="📶"
+            fi
+            
+            # Sicherheit Icon
+            if [[ "$security" == *"WPA"* ]]; then
+                sec_icon="🔒"
+            elif [[ -n "$security" ]]; then
+                sec_icon="🔒"
+            else
+                sec_icon="🔓"
+            fi
+            
+            echo "$icon $sec_icon $ssid ($signal%)"
+        fi
+    done
+}
+
+# Funktion: Aktuelle Verbindung anzeigen
+get_current_connection() {
+    current=$(nmcli -t -f NAME connection show --active | grep -v '^lo$' | head -1)
+    if [[ -n "$current" ]]; then
+        echo "🔌 Trennen: $current"
+    fi
+}
+
+# Hauptmenü erstellen
+create_menu() {
+    # Aktuelle Verbindung (falls vorhanden)
+    get_current_connection
+    
+    # Trennlinie
+    echo "---"
+    
+    # Verfügbare WLANs
+    scan_wifi
+    
+    # Weitere Optionen
+    echo "---"
+    echo "🔄 Neu scannen"
+    echo "⚙️ NetworkManager öffnen"
+}
+
+# Hauptlogik
+main() {
+    # Menü anzeigen und Auswahl treffen
+    choice=$(create_menu | rofi -dmenu -i -p "WLAN auswählen" -theme-str "$ROFI_THEME")
+    
+    if [[ -z "$choice" ]]; then
+        exit 0
+    fi
+    
+    case "$choice" in
+        "🔄 Neu scannen")
+            # WLAN neu scannen
+            nmcli dev wifi rescan
+            notify-send "WLAN" "Netzwerke werden neu gescannt..." -i network-wireless
+            sleep 2
+            exec "$0"  # Script neu starten
+            ;;
+        "⚙️ NetworkManager öffnen")
+            # NetworkManager GUI öffnen
+            nm-connection-editor &
+            ;;
+        "🔌 Trennen:"*)
+            # Aktuelle Verbindung trennen
+            connection_name=$(echo "$choice" | sed 's/🔌 Trennen: //')
+            nmcli connection down "$connection_name"
+            notify-send "WLAN" "Verbindung zu '$connection_name' getrennt" -i network-wireless-disconnected
+            ;;
+        *)
+            # WLAN-Netzwerk ausgewählt
+            if [[ "$choice" == "---" ]]; then
+                exit 0
+            fi
+            
+            # SSID aus der Auswahl extrahieren
+            ssid=$(echo "$choice" | sed -E 's/^[📶🔒🔓 ]+ (.+) \([0-9]+%\)$/\1/')
+            
+            if [[ -z "$ssid" ]]; then
+                notify-send "WLAN" "Fehler beim Extrahieren der SSID" -i dialog-error
+                exit 1
+            fi
+            
+            # Prüfen ob Netzwerk Passwort benötigt
+            security=$(nmcli -t -f SSID,SECURITY dev wifi | grep "^$ssid:" | cut -d: -f2)
+            
+            if [[ -n "$security" && "$security" != "--" ]]; then
+                # Passwort abfragen
+                password=$(rofi -dmenu -password -p "Passwort für '$ssid'" -theme-str "$ROFI_THEME")
+                
+                if [[ -z "$password" ]]; then
+                    exit 0
+                fi
+                
+                # Mit Passwort verbinden
+                if nmcli dev wifi connect "$ssid" password "$password"; then
+                    notify-send "WLAN" "Erfolgreich mit '$ssid' verbunden" -i network-wireless
+                else
+                    notify-send "WLAN" "Verbindung zu '$ssid' fehlgeschlagen" -i dialog-error
+                fi
+            else
+                # Ohne Passwort verbinden (offenes Netzwerk)
+                if nmcli dev wifi connect "$ssid"; then
+                    notify-send "WLAN" "Erfolgreich mit '$ssid' verbunden" -i network-wireless
+                else
+                    notify-send "WLAN" "Verbindung zu '$ssid' fehlgeschlagen" -i dialog-error
+                fi
+            fi
+            ;;
+    esac
+}
+
+# Script ausführen
+main "$@"
