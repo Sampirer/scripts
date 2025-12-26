@@ -1,0 +1,331 @@
+#!/bin/bash
+set -e
+
+# Tokyo Night Storm Farben
+readonly RED='\033[38;2;247;118;142m'
+readonly GREEN='\033[38;2;158;206;106m'
+readonly YELLOW='\033[38;2;224;175;104m'
+readonly BLUE='\033[38;2;122;162;247m'
+readonly PURPLE='\033[38;2;187;154;247m'
+readonly CYAN='\033[38;2;125;207;255m'
+readonly WHITE='\033[38;2;192;202;245m'
+readonly GRAY='\033[38;2;86;95;137m'
+readonly RESET='\033[0m'
+
+# Konfiguration
+readonly DOTFILES_DIR="$HOME/.dotfiles"
+readonly CONFIG_DIRS=(
+    "$HOME/.config"
+    "$HOME/.local/bin"
+    "$HOME/.local/share"
+    "$HOME/.ssh"
+    "$HOME/.gnupg"
+)
+
+readonly SENSITIVE_PATTERNS=(
+    "*.key"
+    "*.pem"
+    "*password*"
+    "*secret*"
+    "*token*"
+    "known_hosts"
+    "authorized_keys"
+    "*.gpg"
+    "*.asc"
+)
+
+# Hilfsfunktionen
+log_info() {
+    echo -e "${BLUE}[INFO]${RESET} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${RESET} $1"
+}
+
+log_warning() {
+    echo -e "${YELLOW}[WARNING]${RESET} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${RESET} $1"
+}
+
+log_header() {
+    echo -e "\n${PURPLE}=== $1 ===${RESET}\n"
+}
+
+ask_confirmation() {
+    local prompt="$1"
+    local response
+    echo -e "${CYAN}$prompt${RESET} ${GRAY}[y/N]${RESET}"
+    read -r response
+    [[ "$response" =~ ^[Yy]$ ]]
+}
+
+is_sensitive_file() {
+    local file="$1"
+    local basename=$(basename "$file")
+    
+    for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+        if [[ "$basename" == $pattern ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+get_stow_package_name() {
+    local config_path="$1"
+    local relative_path="${config_path#$HOME/}"
+    
+    case "$relative_path" in
+        .config/*)
+            echo "${relative_path#.config/}"
+            ;;
+        .local/bin/*)
+            echo "bin"
+            ;;
+        .local/share/*)
+            echo "share/${relative_path#.local/share/}"
+            ;;
+        .ssh/*)
+            echo "ssh"
+            ;;
+        .gnupg/*)
+            echo "gnupg"
+            ;;
+        *)
+            echo "misc"
+            ;;
+    esac
+}
+
+create_stow_structure() {
+    local source_file="$1"
+    local package_name="$2"
+    local relative_path="${source_file#$HOME/}"
+    local target_dir="$DOTFILES_DIR/$package_name"
+    local target_file="$target_dir/$relative_path"
+    
+    mkdir -p "$(dirname "$target_file")"
+    echo "$target_file"
+}
+
+scan_configs() {
+    log_header "Scanning für Konfigurationsdateien"
+    
+    local found_configs=()
+    
+    for config_dir in "${CONFIG_DIRS[@]}"; do
+        if [[ ! -d "$config_dir" ]]; then
+            continue
+        fi
+        
+        log_info "Durchsuche $config_dir..."
+        
+        while IFS= read -r -d '' file; do
+            if [[ -f "$file" ]]; then
+                local relative_path="${file#$HOME/}"
+                local package_name=$(get_stow_package_name "$file")
+                local stow_file="$DOTFILES_DIR/$package_name/$relative_path"
+                
+                if [[ ! -f "$stow_file" ]]; then
+                    found_configs+=("$file")
+                    if is_sensitive_file "$file"; then
+                        echo -e "  ${RED}●${RESET} $relative_path ${GRAY}(sensitive)${RESET}"
+                    else
+                        echo -e "  ${YELLOW}●${RESET} $relative_path"
+                    fi
+                fi
+            fi
+        done < <(find "$config_dir" -type f -print0 2>/dev/null)
+    done
+    
+    if [[ ${#found_configs[@]} -eq 0 ]]; then
+        log_success "Alle Konfigurationsdateien sind bereits im Dotfiles-Repo"
+    else
+        echo -e "\n${WHITE}Gefunden: ${#found_configs[@]} neue Konfigurationsdateien${RESET}"
+    fi
+}
+
+import_configs() {
+    log_header "Importiere Konfigurationsdateien"
+    
+    if [[ ! -d "$DOTFILES_DIR" ]]; then
+        log_error "Dotfiles-Verzeichnis $DOTFILES_DIR existiert nicht"
+        exit 1
+    fi
+    
+    local imported_count=0
+    local sensitive_files=()
+    
+    for config_dir in "${CONFIG_DIRS[@]}"; do
+        if [[ ! -d "$config_dir" ]]; then
+            continue
+        fi
+        
+        while IFS= read -r -d '' file; do
+            if [[ -f "$file" ]]; then
+                local relative_path="${file#$HOME/}"
+                local package_name=$(get_stow_package_name "$file")
+                local stow_file="$DOTFILES_DIR/$package_name/$relative_path"
+                
+                if [[ ! -f "$stow_file" ]]; then
+                    local sensitive=""
+                    if is_sensitive_file "$file"; then
+                        sensitive=" ${RED}(sensitive)${RESET}"
+                        sensitive_files+=("$relative_path")
+                    fi
+                    
+                    if ask_confirmation "Importiere $relative_path$sensitive?"; then
+                        local target_file=$(create_stow_structure "$file" "$package_name")
+                        cp "$file" "$target_file"
+                        log_success "Importiert: $relative_path"
+                        ((imported_count++))
+                    fi
+                fi
+            fi
+        done < <(find "$config_dir" -type f -print0 2>/dev/null)
+    done
+    
+    # Sensitive Dateien zur .gitignore hinzufügen
+    if [[ ${#sensitive_files[@]} -gt 0 ]]; then
+        log_warning "Füge sensitive Dateien zur .gitignore hinzu..."
+        for sensitive_file in "${sensitive_files[@]}"; do
+            echo "$sensitive_file" >> "$DOTFILES_DIR/.gitignore"
+        done
+        sort -u "$DOTFILES_DIR/.gitignore" -o "$DOTFILES_DIR/.gitignore"
+    fi
+    
+    log_success "Import abgeschlossen: $imported_count Dateien importiert"
+}
+
+export_configs() {
+    log_header "Exportiere Konfigurationsdateien mit Stow"
+    
+    if [[ ! -d "$DOTFILES_DIR" ]]; then
+        log_error "Dotfiles-Verzeichnis $DOTFILES_DIR existiert nicht"
+        exit 1
+    fi
+    
+    cd "$DOTFILES_DIR"
+    
+    local packages=($(find . -maxdepth 1 -type d -not -name '.' -not -name '.git' -printf '%f\n'))
+    
+    if [[ ${#packages[@]} -eq 0 ]]; then
+        log_warning "Keine Stow-Pakete gefunden"
+        return
+    fi
+    
+    for package in "${packages[@]}"; do
+        log_info "Stowe Paket: $package"
+        if stow --restow "$package" 2>/dev/null; then
+            log_success "✓ $package"
+        else
+            log_error "✗ $package (Konflikt oder Fehler)"
+        fi
+    done
+}
+
+show_status() {
+    log_header "Stow-Status aller Konfigurationspakete"
+    
+    if [[ ! -d "$DOTFILES_DIR" ]]; then
+        log_error "Dotfiles-Verzeichnis $DOTFILES_DIR existiert nicht"
+        exit 1
+    fi
+    
+    cd "$DOTFILES_DIR"
+    
+    local packages=($(find . -maxdepth 1 -type d -not -name '.' -not -name '.git' -printf '%f\n'))
+    
+    if [[ ${#packages[@]} -eq 0 ]]; then
+        log_warning "Keine Stow-Pakete gefunden"
+        return
+    fi
+    
+    for package in "${packages[@]}"; do
+        echo -e "${WHITE}Paket: $package${RESET}"
+        
+        # Prüfe ob Paket gestowed ist
+        local stowed=false
+        while IFS= read -r -d '' file; do
+            local relative_path="${file#./}"
+            local target_path="$HOME/$relative_path"
+            
+            if [[ -L "$target_path" ]] && [[ "$(readlink "$target_path")" == "$DOTFILES_DIR/$package/$relative_path" ]]; then
+                stowed=true
+                echo -e "  ${GREEN}●${RESET} $relative_path ${GRAY}(linked)${RESET}"
+            elif [[ -f "$target_path" ]]; then
+                echo -e "  ${YELLOW}●${RESET} $relative_path ${GRAY}(file exists, not linked)${RESET}"
+            else
+                echo -e "  ${RED}●${RESET} $relative_path ${GRAY}(not linked)${RESET}"
+            fi
+        done < <(find "$package" -type f -print0 2>/dev/null)
+        
+        if [[ "$stowed" == true ]]; then
+            echo -e "  ${GREEN}Status: Gestowed${RESET}"
+        else
+            echo -e "  ${RED}Status: Nicht gestowed${RESET}"
+        fi
+        echo
+    done
+}
+
+show_help() {
+    cat << EOF
+${PURPLE}dotfiles-sync${RESET} - Synchronisiert System-Configs mit Dotfiles-Repo
+
+${WHITE}VERWENDUNG:${RESET}
+  dotfiles-sync ${CYAN}BEFEHL${RESET}
+
+${WHITE}BEFEHLE:${RESET}
+  ${CYAN}scan${RESET}     Zeigt Unterschiede zwischen System und Repo
+  ${CYAN}import${RESET}   Kopiert fehlende Configs ins Repo (interaktiv)
+  ${CYAN}export${RESET}   Stowed alle Configs aus dem Repo
+  ${CYAN}status${RESET}   Zeigt Stow-Status aller Configs
+  ${CYAN}help${RESET}     Zeigt diese Hilfe
+
+${WHITE}BEISPIELE:${RESET}
+  dotfiles-sync scan
+  dotfiles-sync import
+  dotfiles-sync export
+  dotfiles-sync status
+
+${GRAY}Dotfiles-Verzeichnis: $DOTFILES_DIR${RESET}
+EOF
+}
+
+# Hauptlogik
+main() {
+    case "${1:-}" in
+        scan)
+            scan_configs
+            ;;
+        import)
+            import_configs
+            ;;
+        export)
+            export_configs
+            ;;
+        status)
+            show_status
+            ;;
+        help|--help|-h)
+            show_help
+            ;;
+        "")
+            log_error "Kein Befehl angegeben"
+            show_help
+            exit 1
+            ;;
+        *)
+            log_error "Unbekannter Befehl: $1"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
