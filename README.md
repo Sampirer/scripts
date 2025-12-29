@@ -111,6 +111,15 @@ update-readme           # Für alle Repos generieren
 
 ---
 
+## 🤖 Credits
+
+This setup was created with significant assistance from [Claude](https://claude.ai) (Anthropic).
+
+Diese Konfiguration wurde mit erheblicher Unterstützung von [Claude](https://claude.ai) (Anthropic) erstellt.
+
+
+---
+
 <div align="center">
 
 **Made with ❤️ on Arch Linux**
