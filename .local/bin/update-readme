@@ -94,39 +94,76 @@ stow <package-name>
 
 EOF
     
-    # Stow-Ordner durchgehen
+    # Kategorien definieren
+    declare -A categories
+    categories["shell"]="bash zsh fish tmux"
+    categories["desktop"]="i3 sway polybar waybar rofi dunst"
+    categories["tools"]="git vim nvim emacs"
+    categories["other"]=""
+    
+    # Pakete nach Kategorien sortieren
+    declare -A categorized_packages
     for stow_dir in "$repo_dir"/*/; do
         if [[ -d "$stow_dir" && ! "$stow_dir" =~ screenshots$ ]]; then
             local package_name=$(basename "$stow_dir")
-            echo "### $package_name" >> "$readme_file"
+            local category="other"
+            
+            # Kategorie bestimmen
+            for cat in "${!categories[@]}"; do
+                if [[ " ${categories[$cat]} " =~ " $package_name " ]]; then
+                    category="$cat"
+                    break
+                fi
+            done
+            
+            categorized_packages["$category"]+="$package_name "
+        fi
+    done
+    
+    # Kategorien ausgeben
+    for category in shell desktop tools other; do
+        if [[ -n "${categorized_packages[$category]}" ]]; then
+            case "$category" in
+                shell) echo "### Shell & Terminal" >> "$readme_file" ;;
+                desktop) echo "### Desktop Environment" >> "$readme_file" ;;
+                tools) echo "### Development Tools" >> "$readme_file" ;;
+                other) echo "### Weitere Pakete" >> "$readme_file" ;;
+            esac
             echo "" >> "$readme_file"
             
-            # Dateien auflisten
-            echo "**Enthaltene Dateien:**" >> "$readme_file"
-            find "$stow_dir" -type f -printf "- \`%P\`\n" | sort >> "$readme_file"
-            echo "" >> "$readme_file"
-            
-            # Benötigte Pakete extrahieren
-            local packages=""
-            while IFS= read -r -d '' file; do
-                case "$file" in
-                    *.conf|*.config|*.rc|*.yml|*.yaml|*.toml)
-                        # Suche nach Paket-Referenzen in Kommentaren
-                        local found_packages=$(grep -h "# requires:\|# needs:\|# package:\|# depends:" "$file" 2>/dev/null | sed 's/.*: *//' | tr ',' '\n' | xargs)
-                        if [[ -n "$found_packages" ]]; then
-                            packages="$packages $found_packages"
-                        fi
-                        ;;
-                esac
-            done < <(find "$stow_dir" -type f -print0)
-            
-            if [[ -n "$packages" ]]; then
-                echo "**Benötigte Pakete:**" >> "$readme_file"
-                echo "\`\`\`bash" >> "$readme_file"
-                echo "sudo pacman -S$(echo "$packages" | tr ' ' '\n' | sort -u | tr '\n' ' ')" >> "$readme_file"
-                echo "\`\`\`" >> "$readme_file"
+            # Pakete in dieser Kategorie verarbeiten
+            for package_name in ${categorized_packages[$category]}; do
+                local stow_dir="$repo_dir/$package_name"
+                echo "#### $package_name" >> "$readme_file"
                 echo "" >> "$readme_file"
-            fi
+                
+                # Dateien auflisten
+                echo "**Enthaltene Dateien:**" >> "$readme_file"
+                find "$stow_dir" -type f -printf "- \`%P\`\n" | sort >> "$readme_file"
+                echo "" >> "$readme_file"
+                
+                # Benötigte Pakete extrahieren
+                local packages=""
+                while IFS= read -r -d '' file; do
+                    case "$file" in
+                        *.conf|*.config|*.rc|*.yml|*.yaml|*.toml)
+                            # Suche nach Paket-Referenzen in Kommentaren
+                            local found_packages=$(grep -h "# requires:\|# needs:\|# package:\|# depends:" "$file" 2>/dev/null | sed 's/.*: *//' | tr ',' '\n' | xargs)
+                            if [[ -n "$found_packages" ]]; then
+                                packages="$packages $found_packages"
+                            fi
+                            ;;
+                    esac
+                done < <(find "$stow_dir" -type f -print0)
+                
+                if [[ -n "$packages" ]]; then
+                    echo "**Benötigte Pakete:**" >> "$readme_file"
+                    echo "```bash" >> "$readme_file"
+                    echo "sudo pacman -S$(echo "$packages" | tr ' ' '\n' | sort -u | tr '\n' ' ')" >> "$readme_file"
+                    echo "```" >> "$readme_file"
+                    echo "" >> "$readme_file"
+                fi
+            done
         fi
     done
     
@@ -144,6 +181,13 @@ EOF
             fi
         done
     fi
+    
+    # Footer hinzufügen
+    echo "---" >> "$readme_file"
+    echo "" >> "$readme_file"
+    echo "*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*" >> "$readme_file"
+    echo "" >> "$readme_file"
+    echo "Repository: \`<repository-url>\`" >> "$readme_file"
     
     log_success "README.md für Dotfiles erstellt: $readme_file"
 }
@@ -198,15 +242,22 @@ EOF
             
             # Usage-Beispiel generieren
             echo "**Usage:**" >> "$readme_file"
-            echo "\`\`\`bash" >> "$readme_file"
+            echo "```bash" >> "$readme_file"
             
             # Versuche Usage aus dem Script zu extrahieren
             local usage=$(grep -m1 "Usage:\|usage:" "$script" 2>/dev/null | sed 's/.*[Uu]sage: *//' || echo "$script_name [options]")
             echo "$usage" >> "$readme_file"
-            echo "\`\`\`" >> "$readme_file"
+            echo "```" >> "$readme_file"
             echo "" >> "$readme_file"
         fi
     done
+    
+    # Footer hinzufügen
+    echo "---" >> "$readme_file"
+    echo "" >> "$readme_file"
+    echo "*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*" >> "$readme_file"
+    echo "" >> "$readme_file"
+    echo "Repository: \`<repository-url>\`" >> "$readme_file"
     
     log_success "README.md für Scripts erstellt: $readme_file"
 }
@@ -218,17 +269,40 @@ process_arch_install() {
     
     log_section "Verarbeite Arch-Install Repository: $repo_dir"
     
+    # Bestehende README als Vorlage nutzen falls vorhanden
+    local existing_content=""
+    if [[ -f "$readme_file" ]]; then
+        existing_content=$(cat "$readme_file")
+    fi
+    
+    # Version aus Script-Header extrahieren
+    local version="1.0.0"
+    local main_script=""
+    for script in "$repo_dir"/*.sh; do
+        if [[ -f "$script" && $(basename "$script") =~ ^(install|setup|arch) ]]; then
+            main_script="$script"
+            break
+        fi
+    done
+    
+    if [[ -n "$main_script" ]]; then
+        version=$(grep -m1 "^# Version:\|^# v[0-9]" "$main_script" 2>/dev/null | sed 's/^# *[Vv]ersion: *\|^# *v//' || echo "1.0.0")
+    fi
+    
     # README.md Header
-    cat > "$readme_file" << 'EOF'
+    cat > "$readme_file" << EOF
 # Arch Linux Installation Script
 
 Automatisiertes Installationsskript für Arch Linux mit vorkonfigurierten Einstellungen.
+
+**Version:** $version
 
 ## Features
 
 EOF
     
-    # Features aus Scripts extrahieren
+    # Features strukturiert extrahieren
+    echo "### Automatisierte Installation" >> "$readme_file"
     for script in "$repo_dir"/*.sh; do
         if [[ -f "$script" ]]; then
             # Suche nach Feature-Kommentaren
@@ -237,34 +311,55 @@ EOF
     done
     
     echo "" >> "$readme_file"
+    echo "### Konfigurierte Komponenten" >> "$readme_file"
+    echo "- Base System Installation" >> "$readme_file"
+    echo "- Bootloader (GRUB/systemd-boot)" >> "$readme_file"
+    echo "- Desktop Environment" >> "$readme_file"
+    echo "- Essential Tools & Packages" >> "$readme_file"
+    echo "- User Configuration" >> "$readme_file"
+    echo "" >> "$readme_file"
+    
     echo "## Installation" >> "$readme_file"
     echo "" >> "$readme_file"
-    echo "\`\`\`bash" >> "$readme_file"
+    echo "```bash" >> "$readme_file"
     echo "# Script herunterladen und ausführen" >> "$readme_file"
     echo "curl -O <script-url>" >> "$readme_file"
     echo "chmod +x install.sh" >> "$readme_file"
     echo "./install.sh" >> "$readme_file"
-    echo "\`\`\`" >> "$readme_file"
+    echo "```" >> "$readme_file"
     echo "" >> "$readme_file"
     
-    # Installierte Pakete auflisten
+    # Installierte Pakete strukturiert auflisten
     echo "## Installierte Pakete" >> "$readme_file"
     echo "" >> "$readme_file"
     
-    # Suche nach pacman-Befehlen in Scripts
-    local packages=""
+    # Suche nach verschiedenen Paket-Kategorien
+    declare -A package_categories
+    package_categories["base"]="base base-devel linux linux-firmware"
+    package_categories["desktop"]="xorg wayland plasma gnome i3 sway"
+    package_categories["tools"]="git vim nano firefox"
+    
     for script in "$repo_dir"/*.sh; do
         if [[ -f "$script" ]]; then
-            packages="$packages $(grep -o "pacman -S[^ ]* [^\"']*" "$script" 2>/dev/null | sed 's/pacman -S[^ ]* //' | tr '\n' ' ')"
+            # Extrahiere Pakete aus pacman-Befehlen
+            local script_packages=$(grep -o "pacman -S[^ ]* [^\"']*" "$script" 2>/dev/null | sed 's/pacman -S[^ ]* //' | tr '\n' ' ')
+            
+            if [[ -n "$script_packages" ]]; then
+                echo "### $(basename "$script" .sh | sed 's/_/ /g' | sed 's/\b\w/\U&/g')" >> "$readme_file"
+                echo "```" >> "$readme_file"
+                echo "$script_packages" | tr ' ' '\n' | sort -u | grep -v "^$" >> "$readme_file"
+                echo "```" >> "$readme_file"
+                echo "" >> "$readme_file"
+            fi
         fi
     done
     
-    if [[ -n "$packages" ]]; then
-        echo "### Base Pakete" >> "$readme_file"
-        echo "\`\`\`" >> "$readme_file"
-        echo "$packages" | tr ' ' '\n' | sort -u | grep -v "^$" >> "$readme_file"
-        echo "\`\`\`" >> "$readme_file"
-    fi
+    # Footer hinzufügen
+    echo "---" >> "$readme_file"
+    echo "" >> "$readme_file"
+    echo "*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*" >> "$readme_file"
+    echo "" >> "$readme_file"
+    echo "Repository: \`<repository-url>\`" >> "$readme_file"
     
     log_success "README.md für Arch-Install erstellt: $readme_file"
 }
