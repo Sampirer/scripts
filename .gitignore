@@ -2,3 +2,5 @@
 
 # Sensitive dotfiles (automatisch hinzugefügt von dotfiles-sync)
 
+.aider*
+
