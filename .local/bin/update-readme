@@ -16,24 +16,53 @@ readonly GRAY='\033[38;2;86;95;137m'
 readonly RESET='\033[0m'
 
 # Hilfsfunktionen
-log_info() {
-    echo -e "${BLUE}[INFO]${RESET} $1"
+log_info()    { echo -e "${BLUE}[INFO]${RESET} $1"; }
+log_success() { echo -e "${GREEN}[OK]${RESET} $1"; }
+log_warning() { echo -e "${YELLOW}[WARN]${RESET} $1"; }
+log_error()   { echo -e "${RED}[ERROR]${RESET} $1"; }
+log_section() { echo -e "\n${PURPLE}=== $1 ===${RESET}"; }
+
+# Git Remote URL ermitteln
+get_repo_url() {
+    local repo_dir="$1"
+    cd "$repo_dir"
+    local url=$(git remote get-url origin 2>/dev/null || echo "")
+    # SSH zu HTTPS konvertieren für README-Links
+    url=$(echo "$url" | sed 's|git@github.com:|https://github.com/|' | sed 's|\.git$||')
+    echo "$url"
 }
 
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${RESET} $1"
+# Prüfe ob Datei in .gitignore ist
+is_ignored() {
+    local repo_dir="$1"
+    local file="$2"
+    cd "$repo_dir"
+    git check-ignore -q "$file" 2>/dev/null
 }
 
-log_warning() {
-    echo -e "${YELLOW}[WARNING]${RESET} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${RESET} $1"
-}
-
-log_section() {
-    echo -e "\n${PURPLE}=== $1 ===${RESET}"
+# Repository-Typ erkennen - WICHTIG: Reihenfolge beachten!
+detect_repo_type() {
+    local repo_dir="$1"
+    
+    # 1. Prüfe zuerst auf arch-install (hat arch-install.sh oder install.sh)
+    if [[ -f "$repo_dir/arch-install.sh" ]] || [[ -f "$repo_dir/install.sh" ]]; then
+        echo "arch-install"
+        return
+    fi
+    
+    # 2. Prüfe auf scripts (.local/bin Verzeichnis)
+    if [[ -d "$repo_dir/.local/bin" ]]; then
+        echo "scripts"
+        return
+    fi
+    
+    # 3. Ansonsten dotfiles (hat Stow-Pakete)
+    if find "$repo_dir" -maxdepth 1 -type d ! -name '.*' ! -name 'screenshots' | grep -q .; then
+        echo "dotfiles"
+        return
+    fi
+    
+    echo "unknown"
 }
 
 # Screenshot-Funktion
@@ -48,148 +77,142 @@ take_screenshot() {
     
     log_info "Erstelle Screenshot: $screenshot_file"
     
-    if command -v scrot >/dev/null 2>&1; then
+    if command -v flameshot >/dev/null 2>&1; then
+        flameshot full -p "$screenshot_file"
+    elif command -v scrot >/dev/null 2>&1; then
         scrot "$screenshot_file"
-    elif command -v gnome-screenshot >/dev/null 2>&1; then
-        gnome-screenshot -f "$screenshot_file"
     elif command -v import >/dev/null 2>&1; then
         import -window root "$screenshot_file"
     else
-        log_error "Kein Screenshot-Tool gefunden (scrot, gnome-screenshot, oder ImageMagick)"
+        log_error "Kein Screenshot-Tool gefunden (flameshot, scrot, oder ImageMagick)"
         return 1
     fi
     
     log_success "Screenshot erstellt: $screenshot_file"
-    echo "desktop_$timestamp.png"
 }
 
 # Dotfiles Repository verarbeiten
 process_dotfiles() {
     local repo_dir="$1"
     local readme_file="$repo_dir/README.md"
+    local repo_url=$(get_repo_url "$repo_dir")
     
-    log_section "Verarbeite Dotfiles Repository: $repo_dir"
+    log_section "Verarbeite Dotfiles Repository"
     
-    # README.md Header
-    cat > "$readme_file" << 'EOF'
+    # Kategorien definieren (erweitert!)
+    declare -A categories
+    categories["shell"]="bash zsh fish"
+    categories["terminal"]="alacritty kitty wezterm tmux"
+    categories["wm"]="qtile i3 sway hyprland bspwm"
+    categories["desktop"]="picom dunst rofi polybar waybar"
+    categories["tools"]="git vim nvim neovim starship blesh"
+    categories["other"]=""
+    
+    cat > "$readme_file" << EOF
 # Dotfiles
 
-Meine persönlichen Konfigurationsdateien, verwaltet mit GNU Stow.
+Meine persönlichen Konfigurationsdateien für Arch Linux mit Qtile, verwaltet mit GNU Stow.
 
+## Screenshot
+
+EOF
+
+    # Screenshot einbinden (erstes gefundenes)
+    local screenshot_dir="$repo_dir/screenshots"
+    if [[ -d "$screenshot_dir" ]]; then
+        local first_screenshot=$(ls -1 "$screenshot_dir"/*.png 2>/dev/null | head -1)
+        if [[ -n "$first_screenshot" ]]; then
+            echo "![Desktop](screenshots/$(basename "$first_screenshot"))" >> "$readme_file"
+            echo "" >> "$readme_file"
+        fi
+    fi
+
+    cat >> "$readme_file" << EOF
 ## Installation
 
-```bash
+\`\`\`bash
 # Repository klonen
-git clone <repository-url> ~/.dotfiles
-cd ~/.dotfiles
+git clone $repo_url ~/repos/dotfiles
+cd ~/repos/dotfiles
 
 # Alle Konfigurationen installieren
-stow */
+stow -t ~ */
 
 # Oder einzelne Pakete installieren
-stow <package-name>
-```
+stow -t ~ <package-name>
+\`\`\`
 
 ## Pakete
 
 EOF
-    
-    # Kategorien definieren
-    declare -A categories
-    categories["shell"]="bash zsh fish tmux"
-    categories["desktop"]="i3 sway polybar waybar rofi dunst"
-    categories["tools"]="git vim nvim emacs"
-    categories["other"]=""
-    
+
     # Pakete nach Kategorien sortieren
     declare -A categorized_packages
     for stow_dir in "$repo_dir"/*/; do
-        if [[ -d "$stow_dir" && ! "$stow_dir" =~ screenshots$ ]]; then
-            local package_name=$(basename "$stow_dir")
-            local category="other"
-            
-            # Kategorie bestimmen
-            for cat in "${!categories[@]}"; do
-                if [[ " ${categories[$cat]} " =~ " $package_name " ]]; then
-                    category="$cat"
-                    break
-                fi
-            done
-            
-            categorized_packages["$category"]+="$package_name "
-        fi
-    done
-    
-    # Kategorien ausgeben
-    for category in shell desktop tools other; do
-        if [[ -n "${categorized_packages[$category]}" ]]; then
-            case "$category" in
-                shell) echo "### Shell & Terminal" >> "$readme_file" ;;
-                desktop) echo "### Desktop Environment" >> "$readme_file" ;;
-                tools) echo "### Development Tools" >> "$readme_file" ;;
-                other) echo "### Weitere Pakete" >> "$readme_file" ;;
-            esac
-            echo "" >> "$readme_file"
-            
-            # Pakete in dieser Kategorie verarbeiten
-            for package_name in ${categorized_packages[$category]}; do
-                local stow_dir="$repo_dir/$package_name"
-                echo "#### $package_name" >> "$readme_file"
-                echo "" >> "$readme_file"
-                
-                # Dateien auflisten
-                echo "**Enthaltene Dateien:**" >> "$readme_file"
-                find "$stow_dir" -type f -printf "- \`%P\`\n" | sort >> "$readme_file"
-                echo "" >> "$readme_file"
-                
-                # Benötigte Pakete extrahieren
-                local packages=""
-                while IFS= read -r -d '' file; do
-                    case "$file" in
-                        *.conf|*.config|*.rc|*.yml|*.yaml|*.toml)
-                            # Suche nach Paket-Referenzen in Kommentaren
-                            local found_packages=$(grep -h "# requires:\|# needs:\|# package:\|# depends:" "$file" 2>/dev/null | sed 's/.*: *//' | tr ',' '\n' | xargs)
-                            if [[ -n "$found_packages" ]]; then
-                                packages="$packages $found_packages"
-                            fi
-                            ;;
-                    esac
-                done < <(find "$stow_dir" -type f -print0)
-                
-                if [[ -n "$packages" ]]; then
-                    echo "**Benötigte Pakete:**" >> "$readme_file"
-                    echo "```bash" >> "$readme_file"
-                    echo "sudo pacman -S$(echo "$packages" | tr ' ' '\n' | sort -u | tr '\n' ' ')" >> "$readme_file"
-                    echo "```" >> "$readme_file"
-                    echo "" >> "$readme_file"
-                fi
-            done
-        fi
-    done
-    
-    # Screenshots einbinden
-    local screenshot_dir="$repo_dir/screenshots"
-    if [[ -d "$screenshot_dir" ]]; then
-        echo "## Screenshots" >> "$readme_file"
-        echo "" >> "$readme_file"
+        [[ ! -d "$stow_dir" ]] && continue
+        local package_name=$(basename "$stow_dir")
+        [[ "$package_name" == "screenshots" ]] && continue
+        [[ "$package_name" == ".git" ]] && continue
         
-        for screenshot in "$screenshot_dir"/*.png "$screenshot_dir"/*.jpg; do
-            if [[ -f "$screenshot" ]]; then
-                local screenshot_name=$(basename "$screenshot")
-                echo "![Screenshot](screenshots/$screenshot_name)" >> "$readme_file"
-                echo "" >> "$readme_file"
+        local category="other"
+        for cat in "${!categories[@]}"; do
+            if [[ " ${categories[$cat]} " =~ " $package_name " ]]; then
+                category="$cat"
+                break
             fi
         done
-    fi
+        
+        categorized_packages["$category"]+="$package_name "
+    done
     
-    # Footer hinzufügen
-    echo "---" >> "$readme_file"
-    echo "" >> "$readme_file"
-    echo "*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*" >> "$readme_file"
-    echo "" >> "$readme_file"
-    echo "Repository: \`<repository-url>\`" >> "$readme_file"
+    # Kategorien in Reihenfolge ausgeben
+    for category in shell terminal wm desktop tools other; do
+        [[ -z "${categorized_packages[$category]}" ]] && continue
+        
+        case "$category" in
+            shell)    echo "### Shell" >> "$readme_file" ;;
+            terminal) echo "### Terminal" >> "$readme_file" ;;
+            wm)       echo "### Window Manager" >> "$readme_file" ;;
+            desktop)  echo "### Desktop" >> "$readme_file" ;;
+            tools)    echo "### Tools" >> "$readme_file" ;;
+            other)    echo "### Weitere" >> "$readme_file" ;;
+        esac
+        echo "" >> "$readme_file"
+        
+        for package_name in ${categorized_packages[$category]}; do
+            local stow_dir="$repo_dir/$package_name"
+            echo "#### $package_name" >> "$readme_file"
+            echo "" >> "$readme_file"
+            
+            # Dateien auflisten (OHNE .gitignore Dateien!)
+            echo "Dateien:" >> "$readme_file"
+            while IFS= read -r file; do
+                local rel_path="${file#$stow_dir/}"
+                # Prüfe ob in .gitignore
+                if ! is_ignored "$repo_dir" "$package_name/$rel_path"; then
+                    echo "- \`$rel_path\`" >> "$readme_file"
+                fi
+            done < <(find "$stow_dir" -type f -not -path '*/.git/*' | sort)
+            echo "" >> "$readme_file"
+        done
+    done
     
-    log_success "README.md für Dotfiles erstellt: $readme_file"
+    # Footer
+    cat >> "$readme_file" << EOF
+## Theme
+
+Tokyo Night Storm
+
+## Verwandte Repositories
+
+- [arch-install](https://github.com/Sampirer/arch-install) - Installations-Script
+- [scripts](https://github.com/Sampirer/scripts) - Utility Scripts
+
+---
+*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*
+EOF
+
+    log_success "README.md erstellt: $readme_file"
 }
 
 # Scripts Repository verarbeiten
@@ -197,190 +220,213 @@ process_scripts() {
     local repo_dir="$1"
     local readme_file="$repo_dir/README.md"
     local scripts_dir="$repo_dir/.local/bin"
+    local repo_url=$(get_repo_url "$repo_dir")
     
-    log_section "Verarbeite Scripts Repository: $repo_dir"
+    log_section "Verarbeite Scripts Repository"
     
-    if [[ ! -d "$scripts_dir" ]]; then
-        log_warning "Scripts-Verzeichnis nicht gefunden: $scripts_dir"
-        return 1
-    fi
+    [[ ! -d "$scripts_dir" ]] && { log_error "Scripts-Verzeichnis nicht gefunden"; return 1; }
     
-    # README.md Header
-    cat > "$readme_file" << 'EOF'
+    cat > "$readme_file" << EOF
 # Scripts
 
-Sammlung nützlicher Shell-Scripts für den täglichen Gebrauch.
+Sammlung nützlicher Shell-Scripts für Arch Linux.
 
 ## Installation
 
-```bash
+\`\`\`bash
 # Repository klonen
-git clone <repository-url> ~/scripts
-cd ~/scripts
+git clone $repo_url ~/repos/scripts
+cd ~/repos/scripts
 
 # Scripts verfügbar machen
-stow .
-```
+stow -t ~ .
+\`\`\`
 
-## Scripts
+## Übersicht
 
+| Script | Beschreibung |
+|--------|--------------|
 EOF
-    
-    # Scripts durchgehen
+
+    # Übersichtstabelle erstellen
     for script in "$scripts_dir"/*; do
-        if [[ -f "$script" && -x "$script" ]]; then
-            local script_name=$(basename "$script")
-            echo "### $script_name" >> "$readme_file"
-            echo "" >> "$readme_file"
-            
-            # Beschreibung aus Kommentar-Header extrahieren
-            local description=$(head -10 "$script" | grep "^#" | grep -v "^#!/" | grep -v "^# *$" | head -1 | sed 's/^# *//')
-            if [[ -n "$description" ]]; then
-                echo "$description" >> "$readme_file"
-                echo "" >> "$readme_file"
-            fi
-            
-            # Usage-Beispiel generieren
-            echo "**Usage:**" >> "$readme_file"
-            echo "```bash" >> "$readme_file"
-            
-            # Versuche Usage aus dem Script zu extrahieren
-            local usage=$(grep -m1 "Usage:\|usage:" "$script" 2>/dev/null | sed 's/.*[Uu]sage: *//')
-            if [[ -z "$usage" ]]; then
-                usage="$script_name"
-            fi
-            echo "$usage" >> "$readme_file"
-            echo "```" >> "$readme_file"
-            echo "" >> "$readme_file"
-        fi
+        [[ ! -f "$script" ]] && continue
+        [[ ! -x "$script" ]] && continue
+        
+        local script_name=$(basename "$script")
+        local description=$(head -5 "$script" | grep "^#" | grep -v "^#!/" | grep -v "^# *$" | head -1 | sed 's/^# *//')
+        [[ -z "$description" ]] && description="Shell script"
+        
+        echo "| \`$script_name\` | $description |" >> "$readme_file"
     done
     
-    # Footer hinzufügen
-    echo "---" >> "$readme_file"
     echo "" >> "$readme_file"
-    echo "*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*" >> "$readme_file"
+    echo "## Scripts im Detail" >> "$readme_file"
     echo "" >> "$readme_file"
-    echo "Repository: \`<repository-url>\`" >> "$readme_file"
     
-    log_success "README.md für Scripts erstellt: $readme_file"
+    # Detaillierte Beschreibungen
+    for script in "$scripts_dir"/*; do
+        [[ ! -f "$script" ]] && continue
+        [[ ! -x "$script" ]] && continue
+        
+        local script_name=$(basename "$script")
+        echo "### $script_name" >> "$readme_file"
+        echo "" >> "$readme_file"
+        
+        # Beschreibung extrahieren (alle Kommentarzeilen am Anfang)
+        local description=$(head -10 "$script" | grep "^#" | grep -v "^#!/" | grep -v "^# *$" | head -1 | sed 's/^# *//')
+        if [[ -n "$description" ]]; then
+            echo "$description" >> "$readme_file"
+            echo "" >> "$readme_file"
+        fi
+        
+        # Usage
+        echo "**Verwendung:**" >> "$readme_file"
+        echo "\`\`\`bash" >> "$readme_file"
+        
+        # Prüfe ob das Script eine help/usage Funktion hat
+        if grep -q "show_help\|usage()\|--help" "$script" 2>/dev/null; then
+            echo "$script_name [command] [options]" >> "$readme_file"
+            echo "" >> "$readme_file"
+            # Befehle extrahieren wenn vorhanden
+            local commands=$(grep -E "^\s+[a-z_-]+\)" "$script" 2>/dev/null | head -5 | sed 's/).*$//' | tr -d ' ' | tr '\n' ', ' | sed 's/,$//')
+            if [[ -n "$commands" ]]; then
+                echo "# Befehle: $commands" >> "$readme_file"
+            fi
+        else
+            echo "$script_name" >> "$readme_file"
+        fi
+        echo "\`\`\`" >> "$readme_file"
+        echo "" >> "$readme_file"
+    done
+    
+    # Footer
+    cat >> "$readme_file" << EOF
+## Verwandte Repositories
+
+- [dotfiles](https://github.com/Sampirer/dotfiles) - Konfigurationsdateien
+- [arch-install](https://github.com/Sampirer/arch-install) - Installations-Script
+
+---
+*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*
+EOF
+
+    log_success "README.md erstellt: $readme_file"
 }
 
 # Arch-Install Repository verarbeiten
 process_arch_install() {
     local repo_dir="$1"
     local readme_file="$repo_dir/README.md"
+    local repo_url=$(get_repo_url "$repo_dir")
+    local raw_url="${repo_url/github.com/raw.githubusercontent.com}/main"
     
-    log_section "Verarbeite Arch-Install Repository: $repo_dir"
+    log_section "Verarbeite Arch-Install Repository"
     
-    # Bestehende README als Vorlage nutzen falls vorhanden
-    local existing_content=""
-    if [[ -f "$readme_file" ]]; then
-        existing_content=$(cat "$readme_file")
+    # Version aus Script extrahieren
+    local version="2.2"
+    if [[ -f "$repo_dir/arch-install.sh" ]]; then
+        version=$(grep -m1 "Script v[0-9]" "$repo_dir/arch-install.sh" 2>/dev/null | grep -oP 'v\K[0-9.]+' || echo "2.2")
     fi
     
-    # Version aus Script-Header extrahieren
-    local version="1.0.0"
-    local main_script=""
-    for script in "$repo_dir"/*.sh; do
-        if [[ -f "$script" && $(basename "$script") =~ ^(install|setup|arch) ]]; then
-            main_script="$script"
-            break
-        fi
-    done
-    
-    if [[ -n "$main_script" ]]; then
-        version=$(grep -m1 "^# Version:\|^# v[0-9]" "$main_script" 2>/dev/null | sed 's/^# *[Vv]ersion: *\|^# *v//' || echo "1.0.0")
-    fi
-    
-    # README.md Header
     cat > "$readme_file" << EOF
-# Arch Linux Installation Script
+# Arch Linux Minimal Install Script v$version
 
-Automatisiertes Installationsskript für Arch Linux mit vorkonfigurierten Einstellungen.
+Interaktives Installationsscript für ein minimales Arch Linux Setup mit Qtile.
 
-**Version:** $version
-
-## Features
+## Screenshot
 
 EOF
-    
-    # Features strukturiert extrahieren
-    echo "### Automatisierte Installation" >> "$readme_file"
-    for script in "$repo_dir"/*.sh; do
-        if [[ -f "$script" ]]; then
-            # Suche nach Feature-Kommentaren
-            grep "^# Feature:\|^# - " "$script" 2>/dev/null | sed 's/^# */- /' >> "$readme_file" || true
-        fi
-    done
-    
-    echo "" >> "$readme_file"
-    echo "### Konfigurierte Komponenten" >> "$readme_file"
-    echo "- Base System Installation" >> "$readme_file"
-    echo "- Bootloader (GRUB/systemd-boot)" >> "$readme_file"
-    echo "- Desktop Environment" >> "$readme_file"
-    echo "- Essential Tools & Packages" >> "$readme_file"
-    echo "- User Configuration" >> "$readme_file"
-    echo "" >> "$readme_file"
-    
-    echo "## Installation" >> "$readme_file"
-    echo "" >> "$readme_file"
-    echo "```bash" >> "$readme_file"
-    echo "# Script herunterladen und ausführen" >> "$readme_file"
-    echo "curl -O <script-url>" >> "$readme_file"
-    echo "chmod +x install.sh" >> "$readme_file"
-    echo "./install.sh" >> "$readme_file"
-    echo "```" >> "$readme_file"
-    echo "" >> "$readme_file"
-    
-    # Installierte Pakete strukturiert auflisten
-    echo "## Installierte Pakete" >> "$readme_file"
-    echo "" >> "$readme_file"
-    
-    # Suche nach verschiedenen Paket-Kategorien
-    declare -A package_categories
-    package_categories["base"]="base base-devel linux linux-firmware"
-    package_categories["desktop"]="xorg wayland plasma gnome i3 sway"
-    package_categories["tools"]="git vim nano firefox"
-    
-    for script in "$repo_dir"/*.sh; do
-        if [[ -f "$script" ]]; then
-            # Extrahiere Pakete aus pacman-Befehlen
-            local script_packages=$(grep -o "pacman -S[^ ]* [^\"']*" "$script" 2>/dev/null | sed 's/pacman -S[^ ]* //' | tr '\n' ' ')
-            
-            if [[ -n "$script_packages" ]]; then
-                echo "### $(basename "$script" .sh | sed 's/_/ /g' | sed 's/\b\w/\U&/g')" >> "$readme_file"
-                echo "```" >> "$readme_file"
-                echo "$script_packages" | tr ' ' '\n' | sort -u | grep -v "^$" >> "$readme_file"
-                echo "```" >> "$readme_file"
-                echo "" >> "$readme_file"
-            fi
-        fi
-    done
-    
-    # Footer hinzufügen
-    echo "---" >> "$readme_file"
-    echo "" >> "$readme_file"
-    echo "*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*" >> "$readme_file"
-    echo "" >> "$readme_file"
-    echo "Repository: \`<repository-url>\`" >> "$readme_file"
-    
-    log_success "README.md für Arch-Install erstellt: $readme_file"
-}
 
-# Repository-Typ erkennen
-detect_repo_type() {
-    local repo_dir="$1"
-    
-    if [[ -d "$repo_dir/.local/bin" ]]; then
-        echo "scripts"
-    elif find "$repo_dir" -maxdepth 1 -type d -name "*" | grep -v "^\.$\|^\.\.$\|screenshots$" | head -1 | grep -q .; then
-        # Hat Unterverzeichnisse (potentielle Stow-Pakete)
-        echo "dotfiles"
-    elif ls "$repo_dir"/*.sh >/dev/null 2>&1; then
-        echo "arch-install"
-    else
-        echo "unknown"
+    # Screenshot einbinden
+    local screenshot_dir="$repo_dir/screenshots"
+    if [[ -d "$screenshot_dir" ]]; then
+        local first_screenshot=$(ls -1 "$screenshot_dir"/*.png 2>/dev/null | head -1)
+        if [[ -n "$first_screenshot" ]]; then
+            echo "![Terminal](screenshots/$(basename "$first_screenshot"))" >> "$readme_file"
+            echo "" >> "$readme_file"
+        fi
     fi
+
+    cat >> "$readme_file" << EOF
+## Features
+
+- **Interaktive Konfiguration** – Alle Einstellungen werden abgefragt
+- **Hardware-Erkennung** – CPU und GPU werden automatisch erkannt
+- **Multi-GPU-Support** – Intel, AMD, NVIDIA, Hybrid (Optimus)
+- **Btrfs + Snapper** – Automatische Snapshots mit GRUB-Integration
+- **Qtile Desktop** – Minimaler Tiling Window Manager
+- **Dotfiles-Integration** – Optional: Dotfiles automatisch einrichten
+
+## Schnellstart
+
+\`\`\`bash
+# Arch ISO booten, Netzwerk verbinden, dann:
+curl -LO $raw_url/arch-install.sh
+chmod +x arch-install.sh
+./arch-install.sh
+\`\`\`
+
+## Unterstützte Hardware
+
+| Komponente | Optionen |
+|------------|----------|
+| **CPU** | Intel, AMD (automatische Microcode-Auswahl) |
+| **GPU** | Intel, AMD, NVIDIA, Intel+NVIDIA (Optimus) |
+| **Disk** | NVMe, SATA, VirtIO |
+
+## Partitionsschema
+
+\`\`\`
+┌─────────────────────────────────────────────────┐
+│ Disk                                            │
+├──────────┬──────────┬───────────────────────────┤
+│ EFI 1GB  │ Swap     │ Root (Btrfs)              │
+│ FAT32    │ ~RAM+2GB │ Subvolumes: @, @home, ... │
+└──────────┴──────────┴───────────────────────────┘
+\`\`\`
+
+## Installierte Pakete
+
+### Basis
+\`\`\`
+base linux linux-firmware grub btrfs-progs networkmanager
+\`\`\`
+
+### Desktop
+\`\`\`
+qtile alacritty picom dunst rofi feh thunar
+pipewire wireplumber
+\`\`\`
+
+### Dotfiles-Abhängigkeiten (optional)
+\`\`\`
+starship fzf zoxide ttf-jetbrains-mono-nerd
+flameshot udiskie pasystray
+yay blesh (AUR)
+\`\`\`
+
+## Nach der Installation
+
+Das Script kann automatisch die Dotfiles einrichten:
+- Klont \`dotfiles\` und \`scripts\` Repositories
+- Wendet alle Stow-Konfigurationen an
+- Installiert AUR-Pakete (yay, blesh)
+
+## Verwandte Repositories
+
+- [dotfiles](https://github.com/Sampirer/dotfiles) - Konfigurationsdateien
+- [scripts](https://github.com/Sampirer/scripts) - Utility Scripts
+
+## Lizenz
+
+MIT
+
+---
+*Generiert am: $(date '+%d.%m.%Y %H:%M:%S')*
+EOF
+
+    log_success "README.md erstellt: $readme_file"
 }
 
 # Hauptfunktion
@@ -391,9 +437,19 @@ main() {
     # Argument-Parsing
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --screenshot)
+            --screenshot|-s)
                 take_screenshot_flag=true
                 shift
+                ;;
+            --help|-h)
+                echo "Usage: update-readme [--screenshot] [repo-dir ...]"
+                echo ""
+                echo "Generiert README.md für dotfiles, scripts und arch-install Repos."
+                echo ""
+                echo "Optionen:"
+                echo "  --screenshot, -s  Erstellt einen Desktop-Screenshot"
+                echo "  --help, -h        Zeigt diese Hilfe"
+                exit 0
                 ;;
             *)
                 target_dirs+=("$1")
@@ -402,7 +458,7 @@ main() {
         esac
     done
     
-    # Standard-Verzeichnisse wenn keine angegeben
+    # Standard-Verzeichnisse
     if [[ ${#target_dirs[@]} -eq 0 ]]; then
         target_dirs=(
             "$HOME/repos/dotfiles"
@@ -411,16 +467,16 @@ main() {
         )
     fi
     
-    log_info "Update README.md für Repository-Typen"
+    log_info "Update README.md"
     
     for repo_dir in "${target_dirs[@]}"; do
         if [[ ! -d "$repo_dir" ]]; then
-            log_warning "Verzeichnis nicht gefunden: $repo_dir"
+            log_warning "Nicht gefunden: $repo_dir"
             continue
         fi
         
         local repo_type=$(detect_repo_type "$repo_dir")
-        log_info "Repository-Typ erkannt: $repo_type für $repo_dir"
+        log_info "Erkannt: $repo_type → $(basename "$repo_dir")"
         
         # Screenshot erstellen wenn gewünscht
         if [[ "$take_screenshot_flag" == true ]]; then
@@ -429,23 +485,14 @@ main() {
         
         # Repository verarbeiten
         case "$repo_type" in
-            dotfiles)
-                process_dotfiles "$repo_dir"
-                ;;
-            scripts)
-                process_scripts "$repo_dir"
-                ;;
-            arch-install)
-                process_arch_install "$repo_dir"
-                ;;
-            *)
-                log_warning "Unbekannter Repository-Typ für: $repo_dir"
-                ;;
+            dotfiles)     process_dotfiles "$repo_dir" ;;
+            scripts)      process_scripts "$repo_dir" ;;
+            arch-install) process_arch_install "$repo_dir" ;;
+            *)            log_warning "Unbekannter Typ: $repo_dir" ;;
         esac
     done
     
-    log_success "README.md Update abgeschlossen!"
+    log_success "Fertig!"
 }
 
-# Script ausführen
 main "$@"

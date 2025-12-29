@@ -15,30 +15,36 @@ stow .
 
 ## Scripts
 
+### dotfiles-sync
+
+Tokyo Night Storm Farben
+
+**Usage:**
+
+
 ### rofi-wifi
 
 Rofi WiFi Manager - Tokyo Night Storm Theme
 
 **Usage:**
-```bash
 
-```
 
 ### system-check
 
 Tokyo Night Storm Colors
 
 **Usage:**
-```bash
-${NC}"
-```
+
 
 ### update-readme
 
 update-readme.sh - Automatische README.md Generierung für verschiedene Repository-Typen
 
 **Usage:**
-```bash
-**" >> "$readme_file"
-```
 
+
+---
+
+*Generiert am: 29.12.2025 13:12:21*
+
+Repository: `<repository-url>`
