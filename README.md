@@ -33,7 +33,7 @@ Tokyo Night Storm Colors
 ${NC}"
 ```
 
-### update-readme.sh
+### update-readme
 
 update-readme.sh - Automatische README.md Generierung für verschiedene Repository-Typen
 
