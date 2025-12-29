@@ -1,4 +1,5 @@
 #!/bin/bash
+# system-check - System-Diagnose, Updates und Repository-Status
 set -e
 
 # Tokyo Night Storm Colors

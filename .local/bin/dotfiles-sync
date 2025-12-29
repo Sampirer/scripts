@@ -1,4 +1,5 @@
 #!/bin/bash
+# dotfiles-sync - Synchronisiert System-Configs mit dem Dotfiles-Repository
 set -e
 
 # Tokyo Night Storm Farben

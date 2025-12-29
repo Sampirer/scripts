@@ -1,4 +1,5 @@
 #!/bin/bash
+# rofi-wifi - WLAN-Netzwerk-Manager mit Rofi-Interface
 
 # Rofi WiFi Manager - Tokyo Night Storm Theme
 # Carsten's Arch Linux Setup
