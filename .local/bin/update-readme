@@ -234,7 +234,7 @@ EOF
             echo "" >> "$readme_file"
             
             # Beschreibung aus Kommentar-Header extrahieren
-            local description=$(head -10 "$script" | grep "^#" | grep -v "^#!/" | head -1 | sed 's/^# *//')
+            local description=$(head -10 "$script" | grep "^#" | grep -v "^#!/" | grep -v "^# *$" | head -1 | sed 's/^# *//')
             if [[ -n "$description" ]]; then
                 echo "$description" >> "$readme_file"
                 echo "" >> "$readme_file"
@@ -245,7 +245,10 @@ EOF
             echo "```bash" >> "$readme_file"
             
             # Versuche Usage aus dem Script zu extrahieren
-            local usage=$(grep -m1 "Usage:\|usage:" "$script" 2>/dev/null | sed 's/.*[Uu]sage: *//' || echo "$script_name [options]")
+            local usage=$(grep -m1 "Usage:\|usage:" "$script" 2>/dev/null | sed 's/.*[Uu]sage: *//')
+            if [[ -z "$usage" ]]; then
+                usage="$script_name"
+            fi
             echo "$usage" >> "$readme_file"
             echo "```" >> "$readme_file"
             echo "" >> "$readme_file"
