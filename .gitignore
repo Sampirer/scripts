@@ -1,7 +1,2 @@
-.aider*
-
-# Sensitive dotfiles (automatisch hinzugefügt von dotfiles-sync)
-
-.aider*
-
+# Aider Cache
 .aider*
